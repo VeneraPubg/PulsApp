@@ -1,266 +1,504 @@
-import React, { useState } from 'react';
+import React, { useContext } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   StatusBar,
-  SafeAreaView,
   ScrollView,
   View,
   Text,
   TouchableOpacity,
-  Dimensions,
+  Image,
 } from 'react-native';
+import Svg, { Circle } from 'react-native-svg';
 
 import { Colors, radius, shadow } from '../theme';
+import { UserContext } from '../context';
+import { PLAN, planDayInfo, dateKey, addDays, weekdayIndex, formatDateShort } from '../data';
+import * as store from '../store';
+import Icon from '../components/Icon';
 
-const { width } = Dimensions.get('window');
+const WORKOUT_IMAGES = {
+  'workout-1': require('../assets/today.jpg'),
+  'workout-2': require('../assets/today.jpg'),
+  'workout-3': require('../assets/today.jpg'),
+  'workout-4': require('../assets/today.jpg'),
+};
 
-const GOALS = [
-  { id: 'loss', title: 'Похудение', sub: 'Сжигай жир и будь в тонусе', icon: '🔥' },
-  { id: 'mass', title: 'Набор массы', sub: 'Расти мышцы и силу', icon: '💪' },
-  { id: 'endurance', title: 'Выносливость', sub: 'Дыши глубже, работай дольше', icon: '⚡' },
+const DAY_NAMES = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+const MONTHS = [
+  'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+  'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+];
+const WEEKDAYS_FULL = [
+  'ПОНЕДЕЛЬНИК', 'ВТОРНИК', 'СРЕДА', 'ЧЕТВЕРГ', 'ПЯТНИЦА', 'СУББОТА', 'ВОСКРЕСЕНЬЕ',
 ];
 
-const LEVELS = ['Новичок', 'Средний', 'Продвинутый'];
+const KCAL_GOAL = 500;
+const BASE_KCAL = 360; // повседневная активность (шаги/бытовое) — статика
+const BASE_STEPS = '6 420';
+const BASE_ACTIVE = '24 мин';
 
-export default function HomeScreen() {
-  const [goal, setGoal] = useState('loss');
-  const [level, setLevel] = useState(1);
+export default function HomeScreen({ navigation }) {
+  const { user } = useContext(UserContext);
+  const firstName = (user?.name || 'Атлет').split(' ')[0];
+  const data = store.useAppData();
+
+  const now = new Date();
+  const todayKey = dateKey(now);
+  const weekday = weekdayIndex(now);
+  const dateLabel = `${WEEKDAYS_FULL[weekday]}, ${now.getDate()} ${MONTHS[now.getMonth()].toUpperCase()}`;
+
+  const week = Array.from({ length: 7 }, (_, i) => addDays(now, i - weekday));
+
+  const byDate = data ? store.sessionsByDate(data) : {};
+  const streak = data ? store.getStreak(data) : 0;
+  const weekGoal = store.sessionsThisWeek(data);
+  const planStart = data?.planStart || null;
+
+  // Тренировка дня (или ближайшая следующая, если сегодня день отдыха)
+  let planned = planDayInfo(planStart, todayKey);
+  let dayTag = 'СЕГОДНЯШНЯЯ ТРЕНИРОВКА';
+  if (!planned && planStart) {
+    for (let i = 1; i <= 7; i++) {
+      const key = dateKey(addDays(now, i));
+      const info = planDayInfo(planStart, key);
+      if (info) {
+        planned = info;
+        dayTag = `БЛИЖАЙШАЯ · ${formatDateShort(key).toUpperCase()}`;
+        break;
+      }
+    }
+  }
+  const workout = planned;
+
+  // Кольцо активности: ккал за сегодня (повседневная активность + тренировки)
+  const todaySessions = byDate[todayKey] || [];
+  const kcalToday = BASE_KCAL + todaySessions.reduce((acc, s) => acc + (s.kcal || 0), 0);
+  const progress = Math.min(1, kcalToday / KCAL_GOAL);
+
+  // Номер недели плана
+  const weekNum = workout ? workout.week : 1;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="light-content" backgroundColor={Colors.bg} />
 
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.appName}>PULSE</Text>
-          <View style={styles.progressRow}>
-            <View style={styles.progressBar}>
-  <View style={styles.progressFill} />
-</View>
-            <Text style={styles.progressText}>01 / 02</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Banner */}
-      <View style={styles.banner}>
-        <Text style={styles.bannerTop}>ТВОЙ ТОННА СТАРТА</Text>
-        <Text style={styles.bannerTitle}>СТАНЬ\nСИЛЬНЕЕ\nСЕБЯ ВЧЕРА.</Text>
-      </View>
-
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Цель */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Какая у тебя цель?</Text>
-            <Text style={styles.sectionLink}>ВЫБРЫТЬ ДРУГУЮ</Text>
-          </View>
-          <View style={styles.goalsRow}>
-            {GOALS.map((g) => (
-              <TouchableOpacity
-                key={g.id}
-                style={[styles.goalCard, goal === g.id && styles.goalCardActive]}
-                onPress={() => setGoal(g.id)}
-              >
-                <Text style={styles.goalIcon}>{g.icon}</Text>
-                <Text style={[styles.goalTitle, goal === g.id && styles.goalTitleActive]}>{g.title}</Text>
-                <Text style={[styles.goalSub, goal === g.id && styles.goalSubActive]}>{g.sub}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        {/* Дата + приветствие + колокольчик */}
+        <Text style={styles.dateLabel}>{dateLabel}</Text>
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>{`ТВОЙ РИТМ, ${firstName.toUpperCase()}.`}</Text>
+          <TouchableOpacity style={styles.bellBtn} activeOpacity={0.9}>
+            <Icon name="bell" size={20} color={Colors.white} />
+          </TouchableOpacity>
         </View>
 
-        {/* Уровень */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Твой уровень</Text>
-          <View style={styles.levelsRow}>
-            {LEVELS.map((l, i) => (
-              <TouchableOpacity
-                key={l}
-                style={[styles.levelBtn, level === i && styles.levelBtnActive]}
-                onPress={() => setLevel(i)}
-              >
-                <Text style={[styles.levelText, level === i && styles.levelTextActive]}>{l}</Text>
-              </TouchableOpacity>
-            ))}
+        {/* Полоса ритма */}
+        <View style={styles.streakRow}>
+          <View style={styles.streakLeftWrap}>
+            <Icon name="bolt" size={14} color={Colors.green} />
+            <Text style={styles.streakLeft}>{`${streak} ${pluralDays(streak)} в ритме`}</Text>
           </View>
-          <Text style={styles.levelHint}>
-            Тренируйся регулярно, 2-3 раза в неделю
-          </Text>
+          <Text style={styles.streakRight}>{`Цель недели: ${weekGoal.goal} тренировки · ${weekGoal.done} сделано`}</Text>
         </View>
 
-        <View style={styles.space} />
+        {/* Календарь недели */}
+        <View style={styles.weekRow}>
+          {week.map((d, i) => {
+            const key = dateKey(d);
+            const hasSession = !!(byDate[key] && byDate[key].length > 0);
+            const isPast = i < weekday;
+            const isToday = i === weekday;
+            const showCheck = (isPast || isToday) && hasSession;
+            return (
+              <View key={i} style={styles.dayCol}>
+                <Text style={[styles.dayLabel, isToday && styles.dayLabelActive]}>
+                  {DAY_NAMES[i]}
+                </Text>
+                <View
+                  style={[
+                    styles.dayCircle,
+                    showCheck && styles.dayCircleDone,
+                    !showCheck && isToday && styles.dayCircleToday,
+                  ]}
+                >
+                  {showCheck ? (
+                    <Text style={styles.dayCheck}>✓</Text>
+                  ) : (
+                    <Text style={[styles.dayNum, isToday && styles.dayNumToday]}>
+                      {d.getDate()}
+                    </Text>
+                  )}
+                </View>
+              </View>
+            );
+          })}
+        </View>
 
-        <TouchableOpacity style={styles.planBtn} activeOpacity={0.9}>
-          <Text style={styles.planText}>Собрать мой план</Text>
+        {/* Сегодняшняя тренировка */}
+        <TouchableOpacity
+          style={styles.workoutCard}
+          activeOpacity={0.95}
+          onPress={() => navigation.navigate('WorkoutDetail', { workout })}
+        >
+          <Image
+            source={(workout && WORKOUT_IMAGES[workout.image]) || WORKOUT_IMAGES['workout-1']}
+            style={styles.workoutImage}
+            resizeMode="cover"
+          />
+          <View style={styles.workoutOverlay} />
+          <View style={styles.workoutTop}>
+            <Text style={styles.workoutTag}>{dayTag}</Text>
+            <Icon name="bookmark" size={18} color={Colors.white} />
+          </View>
+          <View style={styles.workoutBody}>
+            <Text style={styles.workoutCategory}>{workout?.category || 'ТРЕНИРОВКА'}</Text>
+            <Text style={styles.workoutTitle}>{`${(workout?.title || 'Тренировка').toUpperCase()}.\n${(workout?.subtitle || '').toUpperCase()}`}</Text>
+            <Text style={styles.workoutMeta}>
+              {`${workout?.time || ''}  ·  ${workout?.exercisesTotal || 0} упражнений  ·  ${workout?.level || ''}`}
+            </Text>
+            <View style={styles.startBtn}>
+              <Text style={styles.startText}>Начать тренировку</Text>
+              <Icon name="play" size={15} color={Colors.bg} />
+            </View>
+          </View>
         </TouchableOpacity>
 
-        <Text style={styles.planHint}>
-          Цель и уровень можно изменить в любой момент
-        </Text>
+        {/* Активность */}
+        <View style={styles.activityCard}>
+          {renderRing(progress, kcalToday)}
+          <View style={styles.activityInfo}>
+            <Text style={styles.activityLabel}>АКТИВНОСТЬ СЕГОДНЯ</Text>
+            <Text style={styles.activityValue}>
+              {kcalToday} <Text style={styles.activityGray}>/ {KCAL_GOAL} ккал</Text>
+            </Text>
+            <Text style={styles.activityMeta}>{`${BASE_STEPS} шагов  ·  ${BASE_ACTIVE} движения`}</Text>
+          </View>
+        </View>
+
+        {/* Твой план */}
+        <TouchableOpacity
+          style={styles.planCard}
+          activeOpacity={0.9}
+          onPress={() => navigation.navigate('Plan')}
+        >
+          <View style={styles.planInfo}>
+            <Text style={styles.planTitle}>{`Твой план «${PLAN.title}»`}</Text>
+            <Text style={styles.planSub}>{`Неделя ${weekNum} из ${PLAN.weeks}  ·  Не сдавай темп`}</Text>
+          </View>
+          <View style={styles.planArrow}>
+            <Icon name="arrowUpRight" size={17} color={Colors.green} />
+          </View>
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+function pluralDays(n) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'день';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'дня';
+  return 'дней';
+}
+
+function renderRing(progress, kcalToday) {
+  const ringR = 44;
+  const ringC = 2 * Math.PI * ringR;
+  return (
+    <View style={styles.ringWrap}>
+      <Svg width={ringR * 2 + 12} height={ringR * 2 + 12}>
+        <Circle
+          cx={ringR + 6}
+          cy={ringR + 6}
+          r={ringR}
+          stroke={Colors.surface2}
+          strokeWidth={9}
+          fill="none"
+        />
+        <Circle
+          cx={ringR + 6}
+          cy={ringR + 6}
+          r={ringR}
+          stroke={Colors.green}
+          strokeWidth={9}
+          fill="none"
+          strokeLinecap="round"
+          strokeDasharray={`${ringC * progress} ${ringC}`}
+          transform={`rotate(-90 ${ringR + 6} ${ringR + 6})`}
+        />
+      </Svg>
+      <View style={styles.ringCenter}>
+        <Text style={styles.ringValue}>{`${Math.round(progress * 100)}%`}</Text>
+        <Text style={styles.ringSub}>от цели</Text>
+      </View>
+    </View>
+  );
+}
+
 const styles = {
   container: { flex: 1, backgroundColor: Colors.bg },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  headerLeft: { flexDirection: 'row', alignItems: 'center' },
-  appName: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: Colors.white,
-    letterSpacing: 0.5,
-  },
-  progressRow: { marginLeft: 16, alignItems: 'flex-end' },
-  progressBar: {
-    width: 56,
-    height: 4,
-    backgroundColor: Colors.surface2,
-    borderRadius: 2,
-    overflow: 'hidden',
-    marginBottom: 4,
-  },
-  progressFill: {
-    height: 4,
-    backgroundColor: Colors.green,
-    borderRadius: 2,
-  },
-  progressText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.green,
-  },
-  banner: {
-    height: 320,
-    borderRadius: radius,
-    overflow: 'hidden',
-    marginHorizontal: 20,
-    marginBottom: 20,
-    justifyContent: 'flex-end',
-    padding: 24,
-    ...shadow,
-  },
-  bannerGradient: {
-    position: 'absolute',
-    inset: 0,
-  },
-  bannerTop: {
+  scroll: { paddingHorizontal: 20, paddingBottom: 30 },
+  dateLabel: {
     fontSize: 11,
     fontWeight: '800',
-    color: Colors.green,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  bannerTitle: {
-    fontSize: 32,
-    fontWeight: '900',
-    color: Colors.white,
-    lineHeight: 36,
-    marginTop: 8,
-  },
-  scrollContent: { paddingHorizontal: 20, paddingBottom: 40 },
-  section: { marginBottom: 20 },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: Colors.white,
-  },
-  sectionLink: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.green,
-  },
-  goalsRow: { flexDirection: 'row', gap: 12 },
-  goalCard: {
-    flex: 1,
-    backgroundColor: Colors.surface2,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: radius,
-    padding: 16,
-    minHeight: 100,
-    ...shadow,
-  },
-  goalCardActive: {
-    backgroundColor: Colors.greenDim,
-    borderColor: Colors.green,
-  },
-  goalIcon: {
-    fontSize: 24,
-    marginBottom: 10,
-  },
-  goalTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: Colors.white,
-  },
-  goalTitleActive: { color: Colors.green },
-  goalSub: {
-    fontSize: 12,
     color: Colors.gray,
-    marginTop: 4,
+    letterSpacing: 1,
+    marginTop: 14,
   },
-  goalSubActive: { color: Colors.white },
-  levelsRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
-  levelBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: Colors.surface2,
-    borderRadius: 24,
+  titleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  title: {
+    flex: 1,
+    fontSize: 28,
+    fontWeight: '900',
+    color: Colors.white,
+    letterSpacing: -0.5,
+    marginRight: 12,
+  },
+  bellBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
-    ...shadow,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  levelBtnActive: {
-    backgroundColor: Colors.green,
-    borderColor: Colors.green,
+  streakRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 14,
+    gap: 10,
   },
-  levelText: {
+  streakLeftWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
+  },
+  streakLeft: {
     fontSize: 13,
     fontWeight: '800',
-    color: Colors.gray,
+    color: Colors.green,
+    flexShrink: 0,
   },
-  levelTextActive: { color: Colors.bg },
-  levelHint: {
+  streakRight: {
     fontSize: 12,
     color: Colors.gray,
-    marginTop: 10,
+    flex: 1,
+    textAlign: 'right',
   },
-  space: { height: 20 },
-  planBtn: {
-    backgroundColor: Colors.green,
-    borderRadius: radius,
-    paddingVertical: 18,
+  weekRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 14,
+  },
+  dayCol: {
     alignItems: 'center',
-    marginHorizontal: 20,
-    ...shadow,
+    gap: 6,
   },
-  planText: {
-    fontSize: 17,
+  dayLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.gray,
+  },
+  dayLabelActive: { color: Colors.green },
+  dayCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: Colors.surface2,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayCircleDone: {
+    backgroundColor: Colors.green,
+    borderColor: Colors.green,
+  },
+  dayCircleToday: {
+    backgroundColor: Colors.bg,
+    borderColor: Colors.green,
+    borderWidth: 2,
+  },
+  dayCheck: {
+    fontSize: 15,
     fontWeight: '900',
     color: Colors.bg,
   },
-  planHint: {
+  dayNum: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: Colors.white,
+  },
+  dayNumToday: { color: Colors.green },
+  workoutCard: {
+    marginTop: 18,
+    height: 340,
+    borderRadius: radius + 4,
+    overflow: 'hidden',
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  workoutImage: {
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+  },
+  workoutOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(10,10,10,0.55)',
+  },
+  workoutTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 14,
+  },
+  workoutTag: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: Colors.white,
+    letterSpacing: 0.8,
+  },
+  workoutBody: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+  },
+  workoutCategory: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: Colors.green,
+    letterSpacing: 0.8,
+    marginBottom: 6,
+  },
+  workoutTitle: {
+    fontSize: 25,
+    fontWeight: '900',
+    color: Colors.white,
+    lineHeight: 30,
+    letterSpacing: -0.3,
+  },
+  workoutMeta: {
+    fontSize: 12,
+    color: Colors.textDim,
+    marginTop: 8,
+    marginBottom: 14,
+  },
+  startBtn: {
+    backgroundColor: Colors.green,
+    borderRadius: 26,
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    ...shadow,
+  },
+  startText: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: Colors.bg,
+  },
+  activityCard: {
+    marginTop: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: radius + 4,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  ringWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ringCenter: {
+    position: 'absolute',
+    alignItems: 'center',
+  },
+  ringValue: {
+    fontSize: 19,
+    fontWeight: '900',
+    color: Colors.white,
+  },
+  ringSub: {
+    fontSize: 9,
+    color: Colors.gray,
+    marginTop: 1,
+  },
+  activityInfo: { flex: 1 },
+  activityLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Colors.gray,
+    letterSpacing: 0.6,
+  },
+  activityValue: {
+    fontSize: 25,
+    fontWeight: '900',
+    color: Colors.white,
+    marginTop: 4,
+  },
+  activityGray: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.gray,
+  },
+  activityMeta: {
     fontSize: 11,
     color: Colors.gray,
-    textAlign: 'center',
-    marginTop: 6,
+    marginTop: 4,
+  },
+  planCard: {
+    marginTop: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: radius + 4,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 4,
+  },
+  planInfo: { flex: 1 },
+  planTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: Colors.white,
+  },
+  planSub: {
+    fontSize: 12,
+    color: Colors.gray,
+    marginTop: 3,
+  },
+  planArrow: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Colors.surface2,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 };

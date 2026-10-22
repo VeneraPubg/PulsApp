@@ -1,7 +1,7 @@
+import { SafeAreaView } from 'react-native-safe-area-context';
 import React from 'react';
 import {
   StatusBar,
-  SafeAreaView,
   ScrollView,
   View,
   Text,
@@ -10,7 +10,10 @@ import {
 } from 'react-native';
 
 import { Colors, radius, shadow } from '../theme';
-import { WORKOUTS } from '../data';
+import { WORKOUTS, PLAN, planDayInfo, dateKey, addDays, buildDayByTemplate } from '../data';
+import { UserContext } from '../context';
+import * as store from '../store';
+import Icon from '../components/Icon';
 
 const { width } = Dimensions.get('window');
 
@@ -18,45 +21,76 @@ const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const DAYS_FULL = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
 
 export default function WorkoutScreen({ navigation }) {
+  const { user } = React.useContext(UserContext);
+  const data = store.useAppData();
+
   const today = new Date();
+  const todayKey = dateKey(today);
   const dayIndex = today.getDay() === 0 ? 6 : today.getDay() - 1; // Пн=0
   const dayNum = today.getDate();
   const month = today.toLocaleString('ru-RU', { month: 'long' }).toUpperCase();
 
+  const byDate = data ? store.sessionsByDate(data) : {};
+  const weekGoal = store.sessionsThisWeek(data);
+  const planStart = data?.planStart || null;
+
+  // Тренировка дня из плана (или ближайшая)
+  let planned = planDayInfo(planStart, todayKey);
+  if (!planned && planStart) {
+    for (let i = 1; i <= 7; i++) {
+      const info = planDayInfo(planStart, dateKey(addDays(today, i)));
+      if (info) {
+        planned = info;
+        break;
+      }
+    }
+  }
+  const workout = planned || buildDayByTemplate('w1', 1);
+  const firstName = (user?.name || 'Атлет').split(' ')[0];
+  const weekNum = workout?.week || 1;
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="light-content" backgroundColor={Colors.bg} />
 
       <View style={styles.header}>
-        <Text style={styles.date}>{`${DAYS_FULL[dayIndex]}, ${dayNum} октября`}</Text>
-        <Text style={styles.greeting}>ТВОЙ РИТМ, САША.</Text>
-        <TouchableOpacity style={styles.bell}>
-          <Text style={styles.bellIcon}>🔔</Text>
-        </TouchableOpacity>
+        <View style={styles.headerTop}>
+          <Text style={styles.date}>{`${DAYS_FULL[dayIndex]}, ${dayNum} ${month.toLowerCase()}`}</Text>
+          <TouchableOpacity style={styles.bell}>
+            <Icon name="bell" size={22} color={Colors.white} />
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.greeting}>{`ТВОЙ РИТМ, ${firstName.toUpperCase()}.`}</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Календарь 7 дней */}
         <View style={styles.calendarCard}>
           <Text style={styles.calendarTitle}>7 дней в ритме</Text>
-          <Text style={styles.calendarSub}>Цель: недель · 4 тренировки</Text>
+          <Text style={styles.calendarSub}>{`Цель: ${weekGoal.goal} тренировки · ${weekGoal.done} готово`}</Text>
           <View style={styles.daysRow}>
-            {DAYS.map((d, i) => {
+            {[0, 1, 2, 3, 4, 5, 6].map((i) => {
+              const d = addDays(today, i - dayIndex);
+              const key = dateKey(d);
+              const hasSession = !!(byDate[key] && byDate[key].length > 0);
               const isToday = i === dayIndex;
-              const isActive = i <= dayIndex;
+              const showCheck = i <= dayIndex && hasSession;
               return (
-                <TouchableOpacity
-                  key={d}
-                  style={[
-                    styles.dayBtn,
-                    isToday && styles.dayToday,
-                    isActive && styles.dayActive,
-                  ]}
-                >
-                  <View style={styles.dayCircle}>
-                    <Text style={[styles.dayNum, isToday && styles.dayNumToday]}>{i + 1}</Text>
+                <TouchableOpacity key={i} style={styles.dayBtn}>
+                  <View
+                    style={[
+                      styles.dayCircle,
+                      showCheck && styles.dayDone,
+                      !showCheck && isToday && styles.dayToday,
+                    ]}
+                  >
+                    {showCheck ? (
+                      <Text style={styles.dayNumDone}>✓</Text>
+                    ) : (
+                      <Text style={[styles.dayNum, isToday && styles.dayNumToday]}>{d.getDate()}</Text>
+                    )}
                   </View>
-                  <Text style={[styles.dayName, isToday && styles.dayNameToday]}>{d}</Text>
+                  <Text style={[styles.dayName, isToday && styles.dayNameToday]}>{DAYS[i]}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -67,25 +101,29 @@ export default function WorkoutScreen({ navigation }) {
         <View style={styles.workoutCard}>
           <TouchableOpacity
             style={styles.workoutBodyWrap}
-            onPress={() => navigation.navigate('WorkoutDetail', { workout: WORKOUTS[0] })}
+            onPress={() => navigation.navigate('WorkoutDetail', { workout })}
           >
           <View style={styles.workoutHeader}>
-            <Text style={styles.workoutTag}>СЕГОДНЯШНЯЯ ТРЕНИРОВКА</Text>
-            <Text style={styles.bookmark}>🔖</Text>
+            <Text style={styles.workoutTag}>{`СЕГОДНЯШНЯЯ ТРЕНИРОВКА · НЕДЕЛЯ ${workout.week || weekNum}`}</Text>
+            <Icon name="bookmark" size={18} color={Colors.white} />
           </View>
           <View style={styles.workoutBody}>
-            <Text style={styles.workoutCategory}>СИЛА · ВЫНОСЛИВОСТЬ</Text>
-            <Text style={styles.workoutTitle}>ВСЕ ТЕЛО.\nПОЛНАЯ ОТДАЧА.</Text>
+            <Text style={styles.workoutCategory}>{workout.category}</Text>
+            <Text style={styles.workoutTitle}>{`${workout.title.toUpperCase()}\n${(workout.subtitle || '').toUpperCase()}`}</Text>
             <View style={styles.workoutMeta}>
-              <Text style={styles.workoutMetaItem}>35 мин · 8 упражнений</Text>
-              <Text style={styles.workoutMetaItem}>Средний уровень</Text>
+              <Text style={styles.workoutMetaItem}>{`${workout.time} · ${workout.exercisesTotal} упражнений`}</Text>
+              <Text style={styles.workoutMetaItem}>{workout.level}</Text>
             </View>
           </View>
           <View style={styles.workoutBottom}>
-            <Text style={styles.workoutBottomLeft}>Нажмите, чтобы начать</Text>
-            <TouchableOpacity style={styles.startBtn}>
+            <TouchableOpacity
+              style={styles.startBtn}
+              onPress={() =>
+                navigation.navigate('WorkoutDetail', { workout })
+              }
+            >
               <Text style={styles.startText}>Начать тренировку</Text>
-              <Text style={styles.startIcon}>▶</Text>
+              <Icon name="play" size={15} color={Colors.bg} />
             </TouchableOpacity>
           </View>
           </TouchableOpacity>
@@ -110,13 +148,13 @@ export default function WorkoutScreen({ navigation }) {
         </View>
 
         {/* План */}
-        <View style={styles.planCard}>
-          <Text style={styles.planTitle}>ТВОЙ ПЛАН · Silinae за 4 недели</Text>
+        <TouchableOpacity style={styles.planCard} activeOpacity={0.9} onPress={() => navigation.navigate('Plan')}>
+          <Text style={styles.planTitle}>{`ТВОЙ ПЛАН · ${PLAN.title.toUpperCase()}`}</Text>
           <View style={styles.planItem}>
-            <Text style={styles.planText}>Недель 2 из 4 · Он снабжает тело</Text>
+            <Text style={styles.planText}>{`Неделя ${weekNum} из ${PLAN.weeks} · Не сдавай темп`}</Text>
             <Text style={styles.planArrow}>›</Text>
           </View>
-        </View>
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -125,14 +163,16 @@ export default function WorkoutScreen({ navigation }) {
 const styles = {
   container: { flex: 1, backgroundColor: Colors.bg },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     paddingHorizontal: 20,
     paddingTop: 8,
     paddingBottom: 16,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   date: {
     fontSize: 13,
@@ -142,10 +182,11 @@ const styles = {
     letterSpacing: 0.5,
   },
   greeting: {
-    fontSize: 34,
+    fontSize: 30,
     fontWeight: '900',
     color: Colors.white,
     letterSpacing: -0.5,
+    marginTop: 6,
   },
   bell: { padding: 6 },
   bellIcon: { fontSize: 24 },
@@ -187,6 +228,15 @@ const styles = {
     backgroundColor: Colors.green,
     borderColor: Colors.green,
   },
+  dayDone: {
+    backgroundColor: Colors.green,
+    borderColor: Colors.green,
+  },
+  dayNumDone: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: Colors.bg,
+  },
   dayActive: {
     borderColor: Colors.surface2,
     backgroundColor: Colors.surface2,
@@ -226,7 +276,7 @@ const styles = {
     letterSpacing: 0.5,
   },
   bookmark: { fontSize: 18 },
-  workoutBodyWrap: { padding: 16, paddingTop: 8 },
+  workoutBodyWrap: { paddingTop: 8 },
   workoutBody: { padding: 16, paddingTop: 8 },
   workoutCategory: {
     fontSize: 11,
@@ -248,26 +298,19 @@ const styles = {
     fontWeight: '800',
   },
   workoutBottom: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     padding: 16,
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
   },
-  workoutBottomLeft: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: Colors.white,
-  },
   startBtn: {
     backgroundColor: Colors.green,
+    paddingVertical: 14,
     paddingHorizontal: 18,
-    paddingVertical: 10,
     borderRadius: 28,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 8,
     ...shadow,
   },

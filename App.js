@@ -1,119 +1,207 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useContext, useRef } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StatusBar,
+  LogBox,
+  ScrollView,
+  useWindowDimensions,
+} from 'react-native';
 
-import Svg, {
-  Circle,
-  Path,
-  Rect,
-  Line,
-  Polyline,
-  G,
-  Defs,
-  LinearGradient,
-  Stop,
-} from 'react-native-svg';
+LogBox.ignoreLogs(['Non-serializable values were found in the navigation state.']);
 
 import { Colors } from './src/theme';
+import { UserContext } from './src/context';
+import { loadSession } from './src/userStore';
+import Icon from './src/components/Icon';
 
 import HomeScreen from './src/screens/HomeScreen';
 import WorkoutScreen from './src/screens/WorkoutScreen';
 import ProgressScreen from './src/screens/ProgressScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
+import ProfileEditScreen from './src/screens/ProfileEditScreen';
 import WorkoutDetailScreen from './src/screens/WorkoutDetailScreen';
+import PlanScreen from './src/screens/PlanScreen';
+import AuthScreen from './src/screens/AuthScreen';
+import OnboardingScreen from './src/screens/OnboardingScreen';
 
-const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
 
-function WorkoutStack() {
+const TABS = [
+  { name: 'Home', label: 'Главная', icon: 'home' },
+  { name: 'Workouts', label: 'Тренировки', icon: 'workouts' },
+  { name: 'Progress', label: 'Прогресс', icon: 'chart' },
+  { name: 'Profile', label: 'Профиль', icon: 'profile' },
+];
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [booting, setBooting] = useState(true);
+  const { setUser: setContextUser } = useContext(UserContext);
+
+  useEffect(() => {
+    loadSession().then((u) => {
+      setUser(u);
+      setBooting(false);
+    });
+  }, []);
+
   return (
-    <Stack.Navigator
-      screenOptions={{
-        headerShown: false,
-      }}
-    >
-      <Stack.Screen name="WorkoutList" component={WorkoutScreen} />
-      <Stack.Screen name="WorkoutDetail" component={WorkoutDetailScreen} />
-    </Stack.Navigator>
+    <SafeAreaProvider>
+      <UserContext.Provider value={{ user, setUser }}>
+        {booting ? (
+          <SplashScreen />
+        ) : user ? (
+          user.goal ? (
+            <AppNavigator />
+          ) : (
+            <OnboardingScreen user={user} onComplete={(u) => setUser(u)} />
+          )
+        ) : (
+          <AuthNavigator onAuth={setUser} />
+        )}
+      </UserContext.Provider>
+    </SafeAreaProvider>
   );
 }
 
-export default function App() {
+function SplashScreen() {
+  return (
+    <SafeAreaView edges={['top', 'left', 'right']} style={{ flex: 1, backgroundColor: Colors.bg }}>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontSize: 32, fontWeight: '900', color: Colors.white, letterSpacing: 1 }}>
+          PULSE
+        </Text>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+function AuthNavigator({ onAuth }) {
   return (
     <NavigationContainer>
-      <Tab.Navigator
-        screenOptions={({ route }) => ({
-          tabBarIcon: ({ focused, color, size }) => {
-            let iconName;
-            if (route.name === 'Home') iconName = 'home';
-            else if (route.name === 'Workouts') iconName = 'fitness';
-            else if (route.name === 'Progress') iconName = 'chart';
-            else if (route.name === 'Profile') iconName = 'user';
-            return (
-              <SVGIcon name={iconName} focused={focused} size={size} color={color} />
-            );
-          },
-          tabBarActiveTintColor: Colors.green,
-          tabBarInactiveTintColor: Colors.gray,
-          tabBarStyle: {
-            backgroundColor: Colors.surface,
-            borderTopColor: Colors.border,
-            borderTopWidth: 1,
-            height: 64,
-            paddingTop: 8,
-          },
-          tabBarLabelStyle: {
-            fontSize: 10,
-            fontWeight: '600',
-            color: Colors.gray,
-          },
-        })}
-      >
-        <Tab.Screen name="Home" component={HomeScreen} />
-        <Tab.Screen name="Workouts" component={WorkoutStack} />
-        <Tab.Screen name="Progress" component={ProgressScreen} />
-        <Tab.Screen name="Profile" component={ProfileScreen} />
-      </Tab.Navigator>
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="Auth">
+          {(props) => <AuthScreen {...props} onAuth={onAuth} />}
+        </Stack.Screen>
+      </Stack.Navigator>
     </NavigationContainer>
   );
 }
 
-function SVGIcon({ name, size = 24, color }) {
-  const stroke = color || Colors.white;
-  const width = size;
-  const height = size;
-
-  const home = (
-    <>
-      <Line x1={width * 0.5} y1={height * 0.2} x2={width * 0.5} y2={height * 0.8} stroke={stroke} strokeWidth={2.2} strokeLinecap="round" />
-      <Polyline points={[width * 0.2, height * 0.5, width * 0.5, height * 0.2, width * 0.8, height * 0.5].join(' ')} stroke={stroke} strokeWidth={2.2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-    </>
+// Корневой стек: «Main» = пейджер вкладок + нижний таб-бар,
+// детали (WorkoutDetail/ProfileEdit) открываются поверх фулл-скрином.
+function AppNavigator() {
+  return (
+    <NavigationContainer>
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="Main">
+          {(props) => <MainScreen {...props} />}
+        </Stack.Screen>
+        <Stack.Screen name="WorkoutDetail" component={WorkoutDetailScreen} />
+        <Stack.Screen name="Plan" component={PlanScreen} />
+        <Stack.Screen name="ProfileEdit" component={ProfileEditScreen} />
+      </Stack.Navigator>
+    </NavigationContainer>
   );
-
-  const fitness = (
-    <>
-      <Circle cx={width * 0.5} cy={height * 0.5} r={height * 0.35} stroke={stroke} strokeWidth={2.2} fill="none" strokeLinecap="round" />
-      <Line x1={width * 0.5} y1={height * 0.18} x2={width * 0.5} y2={height * 0.5} stroke={stroke} strokeWidth={2.2} strokeLinecap="round" />
-      <Polyline points={[width * 0.2, height * 0.82, width * 0.5, height * 0.5, width * 0.8, height * 0.82].join(' ')} stroke={stroke} strokeWidth={2.2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-    </>
-  );
-
-  const chart = (
-    <>
-      <Polyline points={[width * 0.15, height * 0.55, width * 0.35, height * 0.3, width * 0.55, height * 0.5, width * 0.75, height * 0.2, width * 0.9, height * 0.4].join(' ')} stroke={stroke} strokeWidth={2.2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-      <Circle cx={width * 0.35} cy={height * 0.3} r={2.4} fill={stroke} />
-      <Circle cx={width * 0.75} cy={height * 0.2} r={2.4} fill={stroke} />
-    </>
-  );
-
-  const user = (
-    <>
-      <Circle cx={width * 0.5} cy={height * 0.35} r={height * 0.25} stroke={stroke} strokeWidth={2.2} fill="none" strokeLinecap="round" />
-      <Path d={`M ${width * 0.18} ${height * 0.72} Q ${width * 0.5} ${height * 0.72} ${width * 0.82} ${height * 0.72}`} stroke={stroke} strokeWidth={2.2} fill="none" strokeLinecap="round" />
-    </>
-  );
-
-  const icons = { home, fitness, chart, user };
-  return <Svg width={width} height={height}>{icons[name]}</Svg>;
 }
+
+// «Главный» экран: горизонтальный пейджер вкладок со свайпом + нижний таб-бар.
+function MainScreen({ navigation }) {
+  const { width } = useWindowDimensions();
+  const scrollRef = useRef(null);
+  const [index, setIndex] = useState(0);
+
+  const pages = [
+    <HomeScreen key="home" navigation={navigation} />,
+    <WorkoutScreen key="workouts" navigation={navigation} />,
+    <ProgressScreen key="progress" navigation={navigation} />,
+    <ProfileScreen key="profile" navigation={navigation} />,
+  ];
+
+  const indexFromOffset = (x) =>
+    Math.max(0, Math.min(TABS.length - 1, Math.round(x / width)));
+
+  const onMomentumScrollEnd = (e) => setIndex(indexFromOffset(e.nativeEvent.contentOffset.x));
+  const onScrollEndDrag = (e) => setIndex(indexFromOffset(e.nativeEvent.contentOffset.x));
+
+  const jumpTo = (i) => {
+    scrollRef.current?.scrollTo({ x: i * width, animated: true });
+  };
+
+  return (
+    <View style={styles.main}>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.pager}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onMomentumScrollEnd={onMomentumScrollEnd}
+        onScrollEndDrag={onScrollEndDrag}
+      >
+        {pages.map((page, i) => (
+          <View key={i} style={{ width }}>
+            {page}
+          </View>
+        ))}
+      </ScrollView>
+      <BottomTabBar index={index} onTab={jumpTo} />
+    </View>
+  );
+}
+
+function BottomTabBar({ index, onTab }) {
+  const insets = useSafeAreaInsets();
+
+  return (
+    <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <View style={styles.tabRow}>
+        {TABS.map((t, i) => {
+          const active = index === i;
+          return (
+            <TouchableOpacity
+              key={t.name}
+              style={styles.tabItem}
+              activeOpacity={0.9}
+              onPress={() => onTab(i)}
+            >
+              <Icon name={t.icon} size={24} color={active ? Colors.green : '#9A9A9A'} />
+              <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{t.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+const styles = {
+  main: { flex: 1, backgroundColor: Colors.bg },
+  pager: { flex: 1 },
+  tabBar: {
+    backgroundColor: Colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  tabRow: { flexDirection: 'row' },
+  tabItem: { flex: 1, alignItems: 'center', paddingTop: 10, paddingBottom: 4 },
+  tabLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#9A9A9A',
+    marginTop: 3,
+  },
+  tabLabelActive: {
+    color: Colors.green,
+    fontWeight: '800',
+  },
+};

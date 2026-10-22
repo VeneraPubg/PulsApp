@@ -1,41 +1,69 @@
-import React from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useContext } from 'react';
 import {
   StatusBar,
-  SafeAreaView,
   ScrollView,
   View,
   Text,
   TouchableOpacity,
-  Dimensions,
+  Alert,
 } from 'react-native';
 
 import { Colors, radius } from '../theme';
-
-const { width } = Dimensions.get('window');
+import { UserContext } from '../context';
+import { signOutUser } from '../userStore';
+import Icon from '../components/Icon';
 
 const MENU = [
-  { icon: '📋', title: 'Мои тренировки', sub: 'История и результаты' },
-  { icon: '⚙️', title: 'Настройки', sub: 'Уведомления и_units' },
-  { icon: '🔔', title: 'Уведомления', sub: 'Напоминания о тренировке' },
-  { icon: '💾', title: 'Резервная копия', sub: 'Экспорт данных' },
-  { icon: '❓', title: 'Помощь', sub: 'Частые вопросы и поддержка' },
+  { icon: 'doc', title: 'Мои тренировки', sub: 'История и результаты' },
+  { icon: 'gear', title: 'Настройки', sub: 'Уведомления и звуки' },
+  { icon: 'bell', title: 'Уведомления', sub: 'Напоминания о тренировке' },
+  { icon: 'save', title: 'Резервная копия', sub: 'Экспорт данных' },
+  { icon: 'help', title: 'Помощь', sub: 'Частые вопросы и поддержка' },
 ];
 
-export default function ProfileScreen() {
+export default function ProfileScreen({ navigation }) {
+  const { user, setUser } = useContext(UserContext);
+  const initial = (user?.name || 'S').trim().charAt(0).toUpperCase();
+
+  const logout = () => {
+    Alert.alert('Выйти из аккаунта?', 'Прогресс тренировок останется на устройстве.', [
+      { text: 'Отмена', style: 'cancel' },
+      {
+        text: 'Выйти',
+        style: 'destructive',
+        onPress: () =>
+          signOutUser().then(() => {
+            setUser(null);
+          }),
+      },
+    ]);
+  };
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="light-content" backgroundColor={Colors.bg} />
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        <View style={styles.header}>
-          <View style={styles.avatarWrap}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>S</Text>
+          <View style={styles.header}>
+            <View style={styles.avatarWrap}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>{initial}</Text>
+              </View>
             </View>
+            <Text style={styles.name}>{user?.name || 'Атлет'}</Text>
+            <Text style={styles.contact}>{user?.contact || ''}</Text>
+            <TouchableOpacity
+              style={styles.editBtn}
+              activeOpacity={0.9}
+              onPress={() => navigation.navigate('ProfileEdit', { user })}
+            >
+              <View style={styles.editBtnRow}>
+                <Icon name="edit" size={15} color={Colors.green} />
+                <Text style={styles.editBtnText}>Редактировать профиль</Text>
+              </View>
+            </TouchableOpacity>
           </View>
-          <Text style={styles.name}>Саша</Text>
-          <Text style={styles.email}>sasha@example.com</Text>
-        </View>
 
         <View style={styles.statsRow}>
           <View style={styles.stat}>
@@ -65,8 +93,8 @@ export default function ProfileScreen() {
               style={styles.menuItem}
               activeOpacity={0.9}
             >
-              <Text style={styles.menuIcon}>{item.icon}</Text>
-              <View style={styles.menuInfo}>
+                <Icon name={item.icon} size={20} color={Colors.gray} />
+                <View style={styles.menuInfo}>
                 <Text style={styles.menuTitle}>{item.title}</Text>
                 <Text style={styles.menuSub}>{item.sub}</Text>
               </View>
@@ -75,7 +103,7 @@ export default function ProfileScreen() {
           ))}
         </View>
 
-        <TouchableOpacity style={styles.logout} activeOpacity={0.9}>
+        <TouchableOpacity style={styles.logout} activeOpacity={0.9} onPress={logout}>
           <Text style={styles.logoutText}>ВЫЙТИ ИЗ АККАУНТА</Text>
         </TouchableOpacity>
 
@@ -122,9 +150,28 @@ const styles = {
     color: Colors.white,
     marginBottom: 4,
   },
-  email: {
+  contact: {
     fontSize: 13,
     color: Colors.gray,
+  },
+  editBtn: {
+    marginTop: 14,
+    backgroundColor: Colors.surface2,
+    borderWidth: 1,
+    borderColor: Colors.green,
+    borderRadius: 22,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+  },
+  editBtnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  editBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: Colors.green,
   },
   statsRow: {
     flexDirection: 'row',

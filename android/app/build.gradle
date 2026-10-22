@@ -84,6 +84,15 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+
+        // Windows fix: paths longer than 260 chars break the C++ build with the
+        // old ninja (1.10.2) shipped in the Android SDK. Use a fresh ninja that
+        // supports long paths and allow CMake to shorten object file names.
+        externalNativeBuild {
+            cmake {
+                arguments "-DCMAKE_MAKE_PROGRAM=D:\\pubgv\\AndroidSdk\\ninja\\ninja.exe", "-DCMAKE_OBJECT_PATH_MAX=1024"
+            }
+        }
     }
     signingConfigs {
         debug {
