@@ -11,6 +11,7 @@ import {
 
 import { Colors, radius } from '../theme';
 import { registerUser, loginUser } from '../userStore';
+import { syncRefresh } from '../store';
 import Icon from '../components/Icon';
 
 export default function AuthScreen({ onAuth }) {
@@ -74,6 +75,8 @@ export default function AuthScreen({ onAuth }) {
       setError(result.error);
       return;
     }
+    // После входа подтягиваем облачный прогресс (сессии/вес/план)
+    syncRefresh().catch(() => {});
     onAuth(result.user);
   };
 
@@ -291,7 +294,7 @@ export default function AuthScreen({ onAuth }) {
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.note}>{'Pulse · аккаунт хранится на этом устройстве'}</Text>
+        <Text style={styles.note}>{'Pulse · аккаунты синхронизируются через облако'}</Text>
       </ScrollView>
     </SafeAreaView>
   );

@@ -33,9 +33,7 @@ const WEEKDAYS_FULL = [
 ];
 
 const KCAL_GOAL = 500;
-const BASE_KCAL = 360; // повседневная активность (шаги/бытовое) — статика
-const BASE_STEPS = '6 420';
-const BASE_ACTIVE = '24 мин';
+const STEPS_PER_ACTIVE_MIN = 150; // темп функциональной тренировки, шагов/мин
 
 export default function HomeScreen({ navigation }) {
   const { user } = useContext(UserContext);
@@ -57,12 +55,14 @@ export default function HomeScreen({ navigation }) {
   // Тренировка дня (или ближайшая следующая, если сегодня день отдыха)
   let planned = planDayInfo(planStart, todayKey);
   let dayTag = 'СЕГОДНЯШНЯЯ ТРЕНИРОВКА';
+  let workoutKey = todayKey;
   if (!planned && planStart) {
     for (let i = 1; i <= 7; i++) {
       const key = dateKey(addDays(now, i));
       const info = planDayInfo(planStart, key);
       if (info) {
         planned = info;
+        workoutKey = key;
         dayTag = `БЛИЖАЙШАЯ · ${formatDateShort(key).toUpperCase()}`;
         break;
       }
@@ -70,9 +70,15 @@ export default function HomeScreen({ navigation }) {
   }
   const workout = planned;
 
-  // Кольцо активности: ккал за сегодня (повседневная активность + тренировки)
+  // Всё движение дня — только из реальных действий: на свежем аккаунте нули,
+  // каждая завершённая сегодня тренировка добавляет минуты/шаги/ккал
   const todaySessions = byDate[todayKey] || [];
-  const kcalToday = BASE_KCAL + todaySessions.reduce((acc, s) => acc + (s.kcal || 0), 0);
+
+  const workoutMinToday = todaySessions.reduce((acc, s) => acc + Math.round((s.durationSec || 0) / 60), 0);
+  const activeMinToday = workoutMinToday;
+  const stepsToday = workoutMinToday * STEPS_PER_ACTIVE_MIN;
+  const stepsLabel = stepsToday.toLocaleString('ru-RU');
+  const kcalToday = todaySessions.reduce((acc, s) => acc + (s.kcal || 0), 0);
   const progress = Math.min(1, kcalToday / KCAL_GOAL);
 
   // Номер недели плана
@@ -138,7 +144,7 @@ export default function HomeScreen({ navigation }) {
         <TouchableOpacity
           style={styles.workoutCard}
           activeOpacity={0.95}
-          onPress={() => navigation.navigate('WorkoutDetail', { workout })}
+          onPress={() => navigation.navigate('WorkoutDetail', { workout, date: workoutKey })}
         >
           <Image
             source={(workout && WORKOUT_IMAGES[workout.image]) || WORKOUT_IMAGES['workout-1']}
@@ -171,7 +177,14 @@ export default function HomeScreen({ navigation }) {
             <Text style={styles.activityValue}>
               {kcalToday} <Text style={styles.activityGray}>/ {KCAL_GOAL} ккал</Text>
             </Text>
-            <Text style={styles.activityMeta}>{`${BASE_STEPS} шагов  ·  ${BASE_ACTIVE} движения`}</Text>
+            <Text style={styles.activityMeta}>
+              {`${stepsLabel} шагов  ·  ${activeMinToday} мин движения`}
+            </Text>
+            {workoutMinToday > 0 && (
+              <Text style={styles.activityExtra}>
+                {`Тренировки: ${workoutMinToday} мин · ${todaySessions.reduce((acc, s) => acc + (s.kcal || 0), 0)} ккал`}
+              </Text>
+            )}
           </View>
         </View>
 
@@ -467,6 +480,11 @@ const styles = {
     fontSize: 11,
     color: Colors.gray,
     marginTop: 4,
+  },
+  activityExtra: {
+    fontSize: 10,
+    color: Colors.grayDark,
+    marginTop: 3,
   },
   planCard: {
     marginTop: 16,

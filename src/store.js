@@ -3,19 +3,18 @@
 // {
 //   planStart: 'YYYY-MM-DD',            // старт плана
 //   sessions: [{id,date,workoutId,title,category,level,durationSec,kcal,
-//               avgPulse,exercisesDone,exercisesTotal,volumeKg,perExercise:[…]}],
+//               exercisesDone,exercisesTotal,volumeKg,perExercise:[…]}],
 //   weights:  [{date:'YYYY-MM-DD',kg}],
 // }
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useState, useEffect } from 'react';
 import {
-  WORKOUTS,
   PLAN,
-  buildDay,
   dateKey,
-  addDays,
 } from './data';
+import { getToken } from './userStore';
+import { api } from './api';
 
 const STORE_KEY = 'pulse_activity_v2';
 
@@ -56,6 +55,7 @@ async function persist() {
   } catch (e) {
     // ignore write errors
   }
+  schedulePushToCloud();
 }
 
 const EMPTY = { planStart: null, sessions: [], weights: [] };
@@ -77,80 +77,92 @@ async function readStore() {
   return { planStart: null, sessions: [], weights: [] };
 }
 
-// ─── Сиды (демо-данные при первом запуске, чтобы всё «ожило» сразу) ───────────
-// Тренировки 8/6/3 дней назад + история веса. При желании легко аккуратно
-// чистится: AsyncStorage.removeItem('pulse_activity_v1').
+// ─── Демо-данные отключены ─────────────────────────────────────────────────────
+// Новый аккаунт начинается ровно с 1-й недели: старт плана — день регистрации,
+// никаких фейковых сессий и веса. История накапливается честно — сама.
 
-function seedExercises(day) {
-  // калиброванные для игры: пользователь выполняет все упражнения полностью
-  return day.exercises.map((ex) => ({
-    name: ex.name,
-    icon: ex.icon,
-    kind: ex.kind,
-    seconds: ex.seconds,
-    sets: ex.sets,
-    reps: ex.reps,
-    weight: ex.weight,
-    volumeKg: ex.volumeKg,
-    secondsPR: !!ex.timePR,
-  }));
-}
-
-function makeSeedSession(day, when, opts) {
-  const perExercise = seedExercises(day);
-  return {
-    id: `seed_${opts.n}`,
-    date: when,
-    workoutId: day.workoutId,
-    title: day.title,
-    category: day.category,
-    level: day.level,
-    durationSec: opts.durationSec,
-    kcal: opts.kcal,
-    avgPulse: opts.avgPulse,
-    exercisesDone: perExercise.length,
-    exercisesTotal: perExercise.length,
-    volumeKg: perExercise.reduce((acc, x) => acc + (x.volumeKg || 0), 0),
-    perExercise,
-  };
-}
-
+// Каждый день план продвигается сам по себе; пересчёт старта не нужен.
 function ensureSeed(data) {
-  if (data.sessions.length > 0 || data.weights.length > 0) return;
-
-  const today = new Date();
-  const planStart = dateKey(addDays(today, -8)); // сегодня — 9-й день → неделя 2
-  data.planStart = planStart;
-
-  // Сиды: 3 тренировки в тренировочные дни Пн/Ср/Пт прошлой недели.
-  // planStart = сегодня-8 (周三), поэтому: 14 окт → T2 (k1), 16 окт → T3 (k2),
-  // 19 окт (Пн) → T1 (k4, неделя 2)
-  const seedDefs = [
-    { off: -8, tplIdx: 1, week: 1, n: 1, kcal: 268, avgPulse: 137, durationSec: 28 * 60 },
-    { off: -6, tplIdx: 2, week: 1, n: 2, kcal: 287, avgPulse: 144, durationSec: 30 * 60 },
-    { off: -3, tplIdx: 0, week: 2, n: 3, kcal: 335, avgPulse: 141, durationSec: 35 * 60 },
-  ];
-  let kCounter = 0;
-  data.sessions = seedDefs.map((sd) => {
-    const key = dateKey(addDays(today, sd.off));
-    const day = buildDay(WORKOUTS[sd.tplIdx], sd.week, kCounter++);
-    return makeSeedSession(day, key, sd);
-  });
-
-  // История веса: −1.6 кг за месяц (как на макете) + старая точка для «Всё время»
-  data.weights = [
-    { date: dateKey(addDays(today, -180)), kg: 82.0 },
-    { date: dateKey(addDays(today, -24)), kg: 80.0 },
-    { date: dateKey(addDays(today, -18)), kg: 79.4 },
-    { date: dateKey(addDays(today, -12)), kg: 78.9 },
-    { date: dateKey(addDays(today, -6)), kg: 78.6 },
-    { date: dateKey(addDays(today, -1)), kg: 78.4 },
-  ];
-
+  if (data.planStart) return;
+  data.planStart = dateKey(new Date());
   persist();
 }
 
-// Каждый день план продвигается сам по себе; пересчёт старта не нужен.
+// ─── Облачная синхронизация (Render API + MongoDB Atlas) ─────────────────────
+// Локальное хранилище остаётся первичным для UI; сервер — синхронный серевер:
+// после входа состояние подтягивается, каждое изменение отдаётся debounce-пушем.
+
+const syncState = { token: null, timer: null, busy: false };
+
+export async function syncAttachToken() {
+  try {
+    syncState.token = await getToken();
+  } catch (e) {
+    syncState.token = null;
+  }
+}
+
+function schedulePushToCloud() {
+  if (!syncState.token) return;
+  if (syncState.timer) clearTimeout(syncState.timer);
+  syncState.timer = setTimeout(pushToCloud, 3000);
+}
+
+async function pushToCloud() {
+  if (!cache || !syncState.token || syncState.busy) return;
+  syncState.busy = true;
+  try {
+    await api.putState(syncState.token, {
+      planStart: cache.planStart,
+      sessions: cache.sessions,
+      weights: cache.weights,
+    });
+  } catch (e) {
+    // сеть отлетела — локальные данные не теряются, пуш повторится
+  }
+  syncState.busy = false;
+}
+
+// Вызывается после входа/выхода: перечитывает токен и, при наличии,
+// подтягивает облачное состояние
+export async function syncRefresh() {
+  await syncAttachToken();
+  if (!syncState.token) return;
+  await pullFromCloud();
+}
+
+async function pullFromCloud() {
+  if (!syncState.token) return;
+  try {
+    const res = await api.getState(syncState.token);
+    if (res.error || !res.activity) return;
+    const a = res.activity;
+    const remoteHasData =
+      a && (a.planStart || (a.sessions || []).length > 0 || (a.weights || []).length > 0);
+    if (!remoteHasData) return; // в облаке пусто — оставляем локальное
+
+    cache = {
+      planStart: a.planStart || dateKey(new Date()),
+      sessions: Array.isArray(a.sessions) ? a.sessions : [],
+      weights: Array.isArray(a.weights) ? a.weights : [],
+    };
+    await persist();
+    notify();
+  } catch (e) {
+    // офлайн — работаем дальше на локальных данных
+  }
+}
+
+export async function importState(remoteData) {
+  if (!remoteData) return;
+  cache = {
+    planStart: remoteData.planStart || dateKey(new Date()),
+    sessions: Array.isArray(remoteData.sessions) ? remoteData.sessions : [],
+    weights: Array.isArray(remoteData.weights) ? remoteData.weights : [],
+  };
+  await persist();
+  notify();
+}
 
 const initPromise = { current: null };
 
@@ -164,6 +176,9 @@ export function init() {
           await persist();
           notify();
         }
+        // Облако: если пользователь уже залогинен на этом устройстве —
+        // подтягиваем его состояние (серверное побеждает при наличии данных)
+        await syncRefresh();
         return cache;
       } catch (e) {
         console.error('PULSE-INIT-ERROR:', e?.message || e, '\n', e?.stack || '');
@@ -190,7 +205,7 @@ export function kcalFor(totalSec) {
   return Math.round((totalSec / 60) * 8.5);
 }
 
-export function saveSession(day, totalSec, avgPulse, doneNames) {
+export function saveSession(day, totalSec, doneNames) {
   if (!cache || !day) return null;
 
   const doneSet = new Set(doneNames || []);
@@ -206,7 +221,6 @@ export function saveSession(day, totalSec, avgPulse, doneNames) {
     level: day.level,
     durationSec: totalSec,
     kcal: kcalFor(totalSec),
-    avgPulse: avgPulse || 0,
     exercisesDone: doneList.length,
     exercisesTotal: day.exercises.length,
     volumeKg: doneList.reduce((acc, x) => acc + (x.volumeKg || 0), 0),

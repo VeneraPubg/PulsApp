@@ -1,98 +1,82 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { api } from './api';
 
-const STORE_KEY = 'pulse_store_v1';
+// Аутентификация через облачный бэкенд (Render + MongoDB Atlas).
+// Токен и профиль кешируются на устройстве, поэтому приложение
+// работает и офлайн (прогресс при этом хранится локально).
 
-/**
- * Формат хранилища:
- * { accounts: { [id]: { id, name, contact, method, password } }, session: id|null }
- * id = `${method}:${contact.toLowerCase()}`
- */
-
-async function readStore() {
-  try {
-    const raw = await AsyncStorage.getItem(STORE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return { accounts: parsed.accounts || {}, session: parsed.session || null };
-    }
-  } catch (e) {
-    // повреждённое хранилище — начинаем с чистого листа
-  }
-  return { accounts: {}, session: null };
-}
-
-async function writeStore(store) {
-  await AsyncStorage.setItem(STORE_KEY, JSON.stringify(store));
-}
-
-function publicUser(account) {
-  if (!account) return null;
-  return { ...account };
-}
+const AUTH_KEY = 'pulse_auth_v1';
 
 export async function loadSession() {
-  const store = await readStore();
-  return publicUser(store.accounts[store.session]);
+  try {
+    const raw = await AsyncStorage.getItem(AUTH_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.user || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function getToken() {
+  try {
+    const raw = await AsyncStorage.getItem(AUTH_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.token || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function saveAuth({ token, user }) {
+  await AsyncStorage.setItem(AUTH_KEY, JSON.stringify({ token, user }));
 }
 
 export async function registerUser({ name, contact, method, password }) {
-  const store = await readStore();
-  const id = `${method}:${contact.toLowerCase()}`;
-  if (store.accounts[id]) {
-    return { error: 'Такой аккаунт уже зарегистрирован. Войдите.' };
+  try {
+    const data = await api.register({
+      name,
+      contact,
+      method: method || 'email',
+      password,
+    });
+    if (data.error) return { error: data.error };
+    await saveAuth(data);
+    return { user: data.user };
+  } catch (e) {
+    return { error: 'Нет связи с сервером. Проверьте интернет.' };
   }
-  store.accounts[id] = { id, name, contact, method, password };
-  store.session = id;
-  await writeStore(store);
-  return { user: publicUser(store.accounts[id]) };
 }
 
 export async function loginUser({ contact, password }) {
-  const store = await readStore();
-  const idE = `email:${contact.toLowerCase()}`;
-  const idP = `phone:${contact.toLowerCase()}`;
-  const account = store.accounts[idE] || store.accounts[idP];
-  if (!account) {
-    return { error: 'Аккаунт не найден. Зарегистрируйтесь.' };
+  try {
+    const data = await api.login({ contact, password });
+    if (data.error) return { error: data.error };
+    await saveAuth(data);
+    return { user: data.user };
+  } catch (e) {
+    return { error: 'Нет связи с сервером. Проверьте интернет.' };
   }
-  if (account.password !== password) {
-    return { error: 'Неверный пароль.' };
-  }
-  store.session = account.id;
-  await writeStore(store);
-  return { user: publicUser(account) };
 }
 
 export async function updateUser(user, patch) {
-  const store = await readStore();
-  const id = user.id;
-  if (!store.accounts[id]) {
-    return { error: 'Аккаунт не найден.' };
+  try {
+    const token = await getToken();
+    if (!token) return { error: 'Сессия истекла. Войдите снова.' };
+    const data = await api.patchMe(token, patch);
+    if (data.error) return { error: data.error };
+
+    const user2 = { ...user, ...data.user };
+    const token2 = token; // токен не меняется
+    await saveAuth({ token: token2, user: user2 });
+    return { user: user2 };
+  } catch (e) {
+    return { error: 'Нет связи с сервером. Проверьте интернет.' };
   }
-  const account = store.accounts[id];
-  const next = {
-    ...account,
-    ...patch,
-    id: account.id,
-    method: account.method,
-  };
-  if (next.contact && next.contact.toLowerCase() !== account.contact.toLowerCase()) {
-    const newId = `${account.method}:${next.contact.toLowerCase()}`;
-    if (newId !== account.id && store.accounts[newId]) {
-      return { error: 'Такой аккаунт уже существует.' };
-    }
-    delete store.accounts[account.id];
-    next.id = newId;
-    store.accounts[newId] = next;
-    store.session = newId;
-  }
-  store.accounts[next.id] = next;
-  await writeStore(store);
-  return { user: publicUser(next) };
 }
 
 export async function signOutUser() {
-  const store = await readStore();
-  store.session = null;
-  await writeStore(store);
+  // Просто сбрасываем локальную сессию; на сервере JWT без состояния.
+  await AsyncStorage.removeItem(AUTH_KEY);
 }

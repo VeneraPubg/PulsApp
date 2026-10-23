@@ -7,15 +7,19 @@ import {
   TouchableOpacity,
   ScrollView,
   Dimensions,
-  Alert,
   Vibration,
   NativeModules,
 } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
+import { weekdayName } from '../data';
+
 import { Colors, radius } from '../theme';
 import Icon from '../components/Icon';
+import FinishModal from '../components/FinishModal';
+import PraiseModal from '../components/PraiseModal';
 import * as store from '../store';
+import * as appSettings from '../appSettings';
 
 const { width } = Dimensions.get('window');
 
@@ -32,17 +36,19 @@ function beep(kind) {
 
 const VIBRO_END = [0, 350, 180, 350];
 const VIBRO_FINISH = [0, 250, 120, 250, 120, 500];
-
 export default function WorkoutDetailScreen({ route, navigation }) {
   const workout = route.params?.workout;
+  const workoutDate = route.params?.date || null;
   const EXS = workout?.exercises || [];
 
   const [idx, setIdx] = useState(0);
   const [paused, setPaused] = useState(false);
   const [displayLeft, setDisplayLeft] = useState(EXS.length ? EXS[0].seconds : 45);
   const [displayTotal, setDisplayTotal] = useState(0);
-  const [pulse, setPulse] = useState(92);
-  const [pulseAvg, setPulseAvg] = useState(0);
+  // Кастомный диалог завершения: null — закрыт, иначе его данные
+  const [prompt, setPrompt] = useState(null);
+  // Финальная похвала после сохранения: null — закрыта
+  const [praise, setPraise] = useState(null);
 
   const idxRef = useRef(0);
   const pausedRef = useRef(false);
@@ -51,10 +57,21 @@ export default function WorkoutDetailScreen({ route, navigation }) {
   const pausedTotalRef = useRef(0);
   const pausedAtRef = useRef(null);
   const doneRef = useRef(EXS.map(() => false));
-  const pulseRef = useRef(92);
-  const pulseSumRef = useRef(0);
-  const pulseCountRef = useRef(0);
   const finishingRef = useRef(false);
+
+  // ── Настройки звука/вибрации (живые из AsyncStorage) ────────────────────────
+  const settings = appSettings.useAppSettings();
+  const soundRef = useRef(true);
+  soundRef.current = settings?.sound !== false;
+  const vibroRef = useRef(true);
+  vibroRef.current = settings?.vibration !== false;
+  // Стабильные обёртки через ref — не пересоздаются и не ломают другие хуки
+  const vibrate = useCallback((pattern) => {
+    if (vibroRef.current) Vibration.vibrate(pattern);
+  }, []);
+  const beepIfAllowed = useCallback((kind) => {
+    if (soundRef.current) beep(kind);
+  }, []);
 
   // ── Пауза/возобновление ────────────────────────────────────────────────────
   const doPause = useCallback(() => {
@@ -74,22 +91,6 @@ export default function WorkoutDetailScreen({ route, navigation }) {
     setPaused(false);
   }, []);
 
-  // ── Пульс: модель разгоняется по ходу тренировки ───────────────────────────
-  const updatePulse = useCallback(() => {
-    const ex = EXS[idxRef.current];
-    const targetBase = ex?.kind === 'strength' ? 150 : 128;
-    const elapsedMin = (Date.now() - totalStartRef.current - pausedTotalRef.current) / 60000;
-    const warmup = Math.min(1, elapsedMin / 4); // 4 минуты разгон
-    const goal = 95 + (targetBase - 95) * warmup;
-    let next = pulseRef.current + (goal - pulseRef.current) * 0.07 + (Math.random() - 0.5) * 5;
-    next = Math.min(178, Math.max(88, next));
-    pulseRef.current = next;
-    pulseSumRef.current += next;
-    pulseCountRef.current += 1;
-    setPulse(Math.round(next));
-    setPulseAvg(Math.round(pulseSumRef.current / pulseCountRef.current));
-  }, [EXS]);
-
   // ── Завершение текущего упражнения (натуральный конец) ─────────────────────
   const completeExercise = useCallback(() => {
     if (finishingRef.current) return;
@@ -97,8 +98,8 @@ export default function WorkoutDetailScreen({ route, navigation }) {
     doneRef.current[i] = true;
 
     if (i < EXS.length - 1) {
-      Vibration.vibrate(VIBRO_END);
-      beep('double');
+      vibrate(VIBRO_END);
+      beepIfAllowed('double');
       const nextIdx = i + 1;
       idxRef.current = nextIdx;
       exStartRef.current = Date.now();
@@ -107,11 +108,11 @@ export default function WorkoutDetailScreen({ route, navigation }) {
     } else {
       // последнее упражнение готово → финал
       finishingRef.current = true;
-      Vibration.vibrate(VIBRO_FINISH);
-      beep('double');
+      vibrate(VIBRO_FINISH);
+      beepIfAllowed('double');
       finishPrompt('Все упражнения выполнены!');
     }
-  }, [EXS]);
+  }, [EXS, vibrate, beepIfAllowed]);
 
   // ── Основной цикл таймера (якорный: корректируется после фона) ─────────────
   useEffect(() => {
@@ -123,8 +124,6 @@ export default function WorkoutDetailScreen({ route, navigation }) {
       const totalSec = Math.floor((now - totalStartRef.current - pausedTotalRef.current) / 1000);
       setDisplayTotal(totalSec);
 
-      updatePulse();
-
       // обратный отсчёт упражнения
       const dur = EXS[idxRef.current]?.seconds || 45;
       const left = dur - Math.floor((now - exStartRef.current) / 1000);
@@ -135,46 +134,52 @@ export default function WorkoutDetailScreen({ route, navigation }) {
       }
     }, 250);
     return () => clearInterval(timer);
-  }, [EXS, completeExercise, updatePulse]);
+  }, [EXS, completeExercise]);
 
   // ── Сохранение сессии ──────────────────────────────────────────────────────
+  // Кастомный модал завершения: данные считаются один раз при открытии.
   const finishPrompt = (subtitle) => {
     const doneCount = doneRef.current.filter(Boolean).length;
     const totalSec = Math.max(0, Math.floor((Date.now() - totalStartRef.current - pausedTotalRef.current) / 1000));
-    const avgPulse = pulseCountRef.current
-      ? Math.round(pulseSumRef.current / pulseCountRef.current)
-      : 0;
+    setPrompt({
+      subtitle: subtitle.trim(),
+      variant: doneCount === 0 ? 'simple' : 'stats',
+      doneCount,
+      totalSec,
+      kcal: store.kcalFor(totalSec),
+    });
+  };
 
-    if (doneCount === 0) {
-      Alert.alert('Завершить без результата?', subtitle, [
-        { text: 'Продолжить', onPress: resumeFromPrompt },
-        { text: 'Выйти', style: 'destructive', onPress: () => navigation.goBack() },
-      ]);
-      return;
-    }
+  const closePrompt = () => setPrompt(null);
 
-    const kcal = store.kcalFor(totalSec);
-    Alert.alert(
-      'Завершить тренировку?',
-      `${subtitle} Сохранить: ${doneCount} упр. · ${Math.round(totalSec / 60)} мин · ${kcal} ккал.`,
-      [
-        { text: 'Продолжить', onPress: resumeFromPrompt },
-        {
-          text: 'Выйти без сохранения',
-          style: 'destructive',
-          onPress: () => navigation.goBack(),
-        },
-        {
-          text: 'Сохранить',
-          style: 'default',
-          onPress: () => {
-            const doneNames = EXS.filter((_, i) => doneRef.current[i]).map((ex) => ex.name);
-            store.saveSession(workout, totalSec, avgPulse, doneNames);
-            navigation.goBack();
-          },
-        },
-      ],
-    );
+  const handlePromptContinue = () => {
+    closePrompt();
+    resumeFromPrompt();
+  };
+
+  const handlePromptExit = () => {
+    closePrompt();
+    navigation.goBack();
+  };
+
+  // Сохранение → финальная похвала → выход по кнопке «Готово»
+  const handlePromptSave = () => {
+    if (!prompt) return;
+    const { totalSec, kcal, doneCount } = prompt;
+    const doneNames = EXS.filter((_, i) => doneRef.current[i]).map((ex) => ex.name);
+    closePrompt();
+    store.saveSession(workout, totalSec, doneNames);
+    setPraise({
+      doneCount,
+      totalSec,
+      kcal,
+      title: workout.title || 'Тренировка',
+    });
+  };
+
+  const handlePraiseDone = () => {
+    setPraise(null);
+    navigation.goBack();
   };
 
   // «Продолжить» из промпта: снять финиш-флаг, снять паузу;
@@ -198,6 +203,15 @@ export default function WorkoutDetailScreen({ route, navigation }) {
   const jump = (delta) => {
     if (finishingRef.current) return;
     const cur = idxRef.current;
+    // На последнем упражнении «далее» = пропустить его и завершить тренировку
+    if (delta > 0 && cur === EXS.length - 1) {
+      doneRef.current[cur] = true;
+      finishingRef.current = true;
+      vibrate(VIBRO_FINISH);
+      beepIfAllowed('double');
+      finishPrompt('Все упражнения выполнены!');
+      return;
+    }
     const target = Math.min(EXS.length - 1, Math.max(0, cur + delta));
     if (target === cur) return;
     if (delta < 0) {
@@ -269,7 +283,7 @@ export default function WorkoutDetailScreen({ route, navigation }) {
         </TouchableOpacity>
         <View style={styles.titleWrap}>
           <Text style={styles.subtitle}>{(workout.subtitle?.split('.')[0] || 'ТРЕНИРОВКА').toUpperCase()}</Text>
-          <Text style={styles.subtitleSmall}>{`Неделя ${workout.week} · ${workout.dayLabel}`}</Text>
+          <Text style={styles.subtitleSmall}>{`Неделя ${workout.week} · ${workoutDate ? weekdayName(workoutDate) : workout.dayLabel}`}</Text>
         </View>
         <TouchableOpacity style={styles.roundBtn}>
           <Icon name="volume" size={16} color={Colors.white} />
@@ -278,15 +292,17 @@ export default function WorkoutDetailScreen({ route, navigation }) {
 
       {/* Сегментированный прогресс */}
       <View style={styles.segments}>
-        {EXS.map((ex, i) => (
-          <View key={`${ex.name}-${i}`} style={styles.segment}>
-            {i < idx && <View style={[styles.segmentFill, { flex: 1 }]} />}
-            {i === idx && (
-              <View style={[styles.segmentFill, { flex: 1 - progress }]} />
-            )}
-            <View style={[styles.segmentEmpty, { flex: i === idx ? progress : 1 }]} />
-          </View>
-        ))}
+        {EXS.map((ex, i) => {
+          // пройденный — полностью зелёный, текущий — накопительно, будущий — серый
+          const fill = i < idx ? 1 : i === idx ? 1 - progress : 0;
+          const rest = i === idx ? progress : i < idx ? 0 : 1;
+          return (
+            <View key={`${ex.name}-${i}`} style={styles.segment}>
+              {fill > 0 ? <View style={[styles.segmentFill, { flex: fill }]} /> : null}
+              {rest > 0 ? <View style={[styles.segmentEmpty, { flex: rest }]} /> : null}
+            </View>
+          );
+        })}
       </View>
 
       <ScrollView
@@ -340,16 +356,8 @@ export default function WorkoutDetailScreen({ route, navigation }) {
           </View>
           <View style={styles.metricDivider} />
           <View style={styles.metric}>
-            <Text style={styles.metricLabel}>ПУЛЬС, УД/МИН</Text>
-            <View style={styles.metricValueRow}>
-              <Icon name="heart" size={15} color={Colors.danger} />
-              <Text style={[styles.metricValue, { color: Colors.green }]}>{pulse}</Text>
-            </View>
-          </View>
-          <View style={styles.metricDivider} />
-          <View style={styles.metric}>
-            <Text style={styles.metricLabel}>СРЕДНИЙ ПУЛЬС</Text>
-            <Text style={styles.metricValue}>{pulseAvg || '—'}</Text>
+            <Text style={styles.metricLabel}>КАЛОРИИ</Text>
+            <Text style={[styles.metricValue, { color: Colors.green }]}>{store.kcalFor(displayTotal)}</Text>
           </View>
         </View>
 
@@ -389,6 +397,31 @@ export default function WorkoutDetailScreen({ route, navigation }) {
           <Text style={styles.finishText}>Завершить тренировку</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Кастомный диалог завершения (вместо системного Alert) */}
+      <FinishModal
+        visible={prompt !== null}
+        variant={prompt?.variant}
+        subtitle={prompt?.subtitle}
+        doneCount={prompt?.doneCount}
+        totalExercises={EXS.length}
+        minutes={prompt ? Math.round(prompt.totalSec / 60) : 0}
+        kcal={prompt?.kcal}
+        onContinue={handlePromptContinue}
+        onExit={handlePromptExit}
+        onSave={handlePromptSave}
+      />
+
+      {/* Финальная похвала после сохранения */}
+      <PraiseModal
+        visible={praise !== null}
+        workoutTitle={praise?.title || ''}
+        doneCount={praise?.doneCount}
+        totalExercises={EXS.length}
+        minutes={praise ? Math.round(praise.totalSec / 60) : 0}
+        kcal={praise?.kcal}
+        onDone={handlePraiseDone}
+      />
     </SafeAreaView>
   );
 }

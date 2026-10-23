@@ -30,6 +30,9 @@ import ProfileScreen from './src/screens/ProfileScreen';
 import ProfileEditScreen from './src/screens/ProfileEditScreen';
 import WorkoutDetailScreen from './src/screens/WorkoutDetailScreen';
 import PlanScreen from './src/screens/PlanScreen';
+import HistoryScreen from './src/screens/HistoryScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
+import HelpScreen from './src/screens/HelpScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 
@@ -108,6 +111,9 @@ function AppNavigator() {
         </Stack.Screen>
         <Stack.Screen name="WorkoutDetail" component={WorkoutDetailScreen} />
         <Stack.Screen name="Plan" component={PlanScreen} />
+        <Stack.Screen name="History" component={HistoryScreen} />
+        <Stack.Screen name="Settings" component={SettingsScreen} />
+        <Stack.Screen name="Help" component={HelpScreen} />
         <Stack.Screen name="ProfileEdit" component={ProfileEditScreen} />
       </Stack.Navigator>
     </NavigationContainer>

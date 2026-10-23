@@ -1,0 +1,18 @@
+# Render Blueprint: PulseApp API (Node + MongoDB Atlas)
+# Деплой: render.com → New + → Blueprint → выбрать репозиторий PulsApp.
+# Render спросит значение MONGODB_URI — вставьте строку mongodb+srv://... от Atlas.
+
+services:
+  - type: web
+    name: pulseapp-api
+    env: node
+    rootDir: server
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: MONGODB_URI
+        sync: false          # вводится вручную при деплое
+      - key: JWT_SECRET
+        generateValue: true  # Render сгенерирует случайный секрет

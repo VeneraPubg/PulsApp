@@ -1,43 +1,72 @@
 import { SafeAreaView } from 'react-native-safe-area-context';
-import React, { useContext } from 'react';
+import React, { useContext, useState } from 'react';
 import {
   StatusBar,
   ScrollView,
   View,
   Text,
   TouchableOpacity,
-  Alert,
+  Share,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { Colors, radius } from '../theme';
 import { UserContext } from '../context';
 import { signOutUser } from '../userStore';
+import * as store from '../store';
 import Icon from '../components/Icon';
+import ConfirmModal from '../components/ConfirmModal';
+
+const BACKUP_KEYS = ['pulse_activity_v2', 'pulse_store_v1', 'pulse_settings_v1'];
+
+async function exportBackup() {
+  const parts = await Promise.all(
+    BACKUP_KEYS.map(async (key) => {
+      try {
+        const raw = await AsyncStorage.getItem(key);
+        return { key, value: raw ? JSON.parse(raw) : null };
+      } catch (e) {
+        return { key, value: null };
+      }
+    }),
+  );
+  const json = JSON.stringify({ app: 'Pulse', version: 1, exportedAt: new Date().toISOString(), data: parts });
+  try {
+    await Share.share({
+      title: 'Резервная копия Pulse',
+      message: json,
+    });
+  } catch (e) {
+    // пользователь отменил шаринг — это не ошибка
+  }
+}
 
 const MENU = [
-  { icon: 'doc', title: 'Мои тренировки', sub: 'История и результаты' },
-  { icon: 'gear', title: 'Настройки', sub: 'Уведомления и звуки' },
-  { icon: 'bell', title: 'Уведомления', sub: 'Напоминания о тренировке' },
-  { icon: 'save', title: 'Резервная копия', sub: 'Экспорт данных' },
-  { icon: 'help', title: 'Помощь', sub: 'Частые вопросы и поддержка' },
+  { icon: 'doc', title: 'Мои тренировки', sub: 'История и результаты', onPress: (nav) => nav.navigate('History') },
+  { icon: 'gear', title: 'Настройки', sub: 'Звук, вибрация, напоминания', onPress: (nav) => nav.navigate('Settings') },
+  { icon: 'bell', title: 'Уведомления', sub: 'Напоминания о тренировке', onPress: (nav) => nav.navigate('Settings') },
+  { icon: 'save', title: 'Резервная копия', sub: 'Экспорт данных', onPress: () => exportBackup() },
+  { icon: 'help', title: 'Помощь', sub: 'Частые вопросы и поддержка', onPress: (nav) => nav.navigate('Help') },
 ];
 
 export default function ProfileScreen({ navigation }) {
   const { user, setUser } = useContext(UserContext);
   const initial = (user?.name || 'S').trim().charAt(0).toUpperCase();
 
+  // Живая статистика из хранилища активности
+  const data = store.useAppData();
+  const sessions = data?.sessions || [];
+  const workoutsCount = sessions.length;
+  const totalMin = Math.round(sessions.reduce((a, s) => a + (s.durationSec || 0), 0) / 60);
+  const totalHours = `${Math.floor(totalMin / 60)} ч`;
+  const weekGoal = store.sessionsThisWeek(data);
+  const planPercent = Math.min(100, Math.round((weekGoal.done / (weekGoal.goal || 1)) * 100));
+
+  // Кастомный диалог выхода (вместо системного Alert)
+  const [logoutOpen, setLogoutOpen] = useState(false);
+
   const logout = () => {
-    Alert.alert('Выйти из аккаунта?', 'Прогресс тренировок останется на устройстве.', [
-      { text: 'Отмена', style: 'cancel' },
-      {
-        text: 'Выйти',
-        style: 'destructive',
-        onPress: () =>
-          signOutUser().then(() => {
-            setUser(null);
-          }),
-      },
-    ]);
+    setLogoutOpen(true);
   };
 
   return (
@@ -67,17 +96,17 @@ export default function ProfileScreen({ navigation }) {
 
         <View style={styles.statsRow}>
           <View style={styles.stat}>
-            <Text style={styles.statValue}>12</Text>
+            <Text style={styles.statValue}>{workoutsCount}</Text>
             <Text style={styles.statLabel}>тренировок</Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.stat}>
-            <Text style={styles.statValue}>48 ч</Text>
+            <Text style={styles.statValue}>{totalHours}</Text>
             <Text style={styles.statLabel}>в движении</Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.stat}>
-            <Text style={styles.statValue}>98 %</Text>
+            <Text style={styles.statValue}>{planPercent} %</Text>
             <Text style={styles.statLabel}>выполнено плана</Text>
           </View>
         </View>
@@ -92,6 +121,7 @@ export default function ProfileScreen({ navigation }) {
               key={item.title}
               style={styles.menuItem}
               activeOpacity={0.9}
+              onPress={() => item.onPress(navigation)}
             >
                 <Icon name={item.icon} size={20} color={Colors.gray} />
                 <View style={styles.menuInfo}>
@@ -111,6 +141,25 @@ export default function ProfileScreen({ navigation }) {
           <Text style={styles.version}>Pulse · версия 1.0.0</Text>
         </View>
       </ScrollView>
+
+      {/* Кастомное подтверждение выхода */}
+      <ConfirmModal
+        visible={logoutOpen}
+        icon="profile"
+        title="Выйти из аккаунта?"
+        subtitle="Прогресс тренировок останется на устройстве."
+        confirmLabel="Выйти"
+        cancelLabel="Отмена"
+        onCancel={() => setLogoutOpen(false)}
+        onConfirm={() => {
+          setLogoutOpen(false);
+          signOutUser().then(() => {
+            // токен синхронизации больше не действует
+            store.syncAttachToken().catch(() => {});
+            setUser(null);
+          });
+        }}
+      />
     </SafeAreaView>
   );
 }

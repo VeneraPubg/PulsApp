@@ -12,14 +12,12 @@ import { Colors, radius } from '../theme';
 import Icon from '../components/Icon';
 import {
   PLAN,
-  planDayInfo,
+  planWeekDays,
   dateKey,
-  addDays,
   formatDateShort,
+  weekdayName,
 } from '../data';
 import * as store from '../store';
-
-const WEEK_HEADER = ['НЕДЕЛЯ 1', 'НЕДЕЛЯ 2', 'НЕДЕЛЯ 3', 'НЕДЕЛЯ 4'];
 
 export default function PlanScreen({ navigation }) {
   const data = store.useAppData();
@@ -29,29 +27,19 @@ export default function PlanScreen({ navigation }) {
   const todayKey = dateKey(now);
   const byDate = data ? store.sessionsByDate(data) : {};
 
-  // Все тренировочные даты плана: 4 недели × 4 дня,
-  // недели сканируем по календарю, чтобы совпасть с planDayInfo
-  const weeks = [];
-  if (planStart) {
-    const start = new Date(`${planStart}T12:00:00`);
-    for (let w = 0; w < PLAN.weeks; w++) {
-      const days = [];
-      for (let off = 0; off < 7; off++) {
-        const d = addDays(start, w * 7 + off);
-        const key = dateKey(d);
-        const info = planDayInfo(planStart, key);
-        if (!info) continue;
-        days.push({
-          key,
-          info,
-          done: !!(byDate[key] && byDate[key].length > 0),
-          isToday: key === todayKey,
-          isPast: key < todayKey,
-        });
-      }
-      weeks.push(days);
-    }
-  }
+  // Недели плана (по порядку тренировок 1→2→3→4, старт — день регистрации)
+  const weeks = planWeekDays(planStart).map((days, wi) =>
+    days.map(({ date, info }) => {
+      const key = date;
+      return {
+        key,
+        info,
+        done: !!(byDate[key] && byDate[key].length > 0),
+        isToday: key === todayKey,
+        isPast: key < todayKey,
+      };
+    }),
+  );
 
   const totalDone = weeks.flat().filter((d) => d.done).length;
 
@@ -76,7 +64,7 @@ export default function PlanScreen({ navigation }) {
 
         {weeks.map((days, wi) => (
           <View key={wi} style={styles.weekBlock}>
-            <Text style={styles.weekTitle}>{WEEK_HEADER[wi]}</Text>
+            <Text style={styles.weekTitle}>{`НЕДЕЛЯ ${wi + 1}`}</Text>
             {days.map((d) => {
               if (!d.info) return null;
               const { info } = d;
@@ -91,7 +79,7 @@ export default function PlanScreen({ navigation }) {
                     statusToday && styles.dayRowToday,
                   ]}
                   activeOpacity={0.9}
-                  onPress={() => navigation.navigate('WorkoutDetail', { workout: info })}
+                  onPress={() => navigation.navigate('WorkoutDetail', { workout: info, date: d.key })}
                 >
                   <View
                     style={[
@@ -106,7 +94,7 @@ export default function PlanScreen({ navigation }) {
                   <View style={styles.dayInfo}>
                     <Text style={styles.dayTitle}>{info.title}</Text>
                     <Text style={styles.daySub}>
-                      {`${formatDateShort(d.key)} · ${info.dayLabel.toUpperCase()} · ${info.time} · ${info.exercisesTotal} упр.`}
+                      {`${formatDateShort(d.key)} · ${weekdayName(d.key).toUpperCase()} · ${info.time} · ${info.exercisesTotal} упр.`}
                     </Text>
                   </View>
                   {statusToday && !statusDone ? (
